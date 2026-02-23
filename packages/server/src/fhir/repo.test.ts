@@ -1493,6 +1493,67 @@ describe('FHIR Repo', () => {
       expect(results).toHaveLength(0);
     }));
 
+  test('Access policy compartment preserved on update but not added to new resources', () =>
+    withTestContext(async () => {
+      const orgAId = randomUUID();
+      const orgBId = randomUUID();
+      const orgARef = 'Organization/' + orgAId;
+      const orgBRef = 'Organization/' + orgBId;
+
+      const makeRepo = (compartmentRef: string): Repository =>
+        new Repository({
+          extendedMode: true,
+          author: { reference: 'Practitioner/' + randomUUID() },
+          accessPolicy: {
+            resourceType: 'AccessPolicy',
+            compartment: { reference: compartmentRef },
+            resource: [{ resourceType: 'Observation', compartment: { reference: compartmentRef } }],
+          } as AccessPolicy,
+        });
+
+      const repoA = makeRepo(orgARef);
+
+      const baseObservation = {
+        resourceType: 'Observation',
+        status: 'final',
+        identifier: [{ value: 'test-obs-id' }],
+        code: { text: 'Test Observation' },
+      } satisfies Observation;
+
+      // Create: compartment is assigned as account
+      const obs1 = await repoA.createResource<Observation>(baseObservation);
+      expect(obs1.meta?.accounts).toHaveLength(1);
+      expect(obs1.meta?.accounts).toContainEqual({ reference: orgARef });
+
+      // Update with same compartment repo: account is preserved
+      const obs2 = await repoA.updateResource<Observation>({
+        id: obs1.id,
+        ...baseObservation,
+        valueString: 'updated-1',
+      });
+      expect(obs2.meta?.accounts).toHaveLength(1);
+      expect(obs2.meta?.accounts).toContainEqual({ reference: orgARef });
+
+      // Update with different compartment repo: orgB should NOT be added
+      // repoB has writer compartment orgB but no resource-level compartment restriction,
+      // so it can read the resource while still exercising the alreadyHasAccount check.
+      const repoB = new Repository({
+        extendedMode: true,
+        author: { reference: 'Practitioner/' + randomUUID() },
+        accessPolicy: {
+          resourceType: 'AccessPolicy',
+          compartment: { reference: orgBRef },
+          resource: [{ resourceType: 'Observation' }],
+        } as AccessPolicy,
+      });
+      const obs3 = await repoB.updateResource<Observation>({
+        id: obs2.id,
+        ...baseObservation,
+        valueString: 'updated-2',
+      });
+      expect(obs3.meta?.accounts).toBeUndefined();
+  }));
+
   test('setTypedValue', () => {
     const patient: Patient = {
       resourceType: 'Patient',
