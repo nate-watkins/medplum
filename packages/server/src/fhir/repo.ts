@@ -2125,17 +2125,22 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
     }
 
     const accounts = new Set<string>();
-    if (!existing && this.context.accessPolicy?.compartment?.reference) {
-      // If the creator's access policy specifies a compartment, then use it as the account.
-      // The writer's access policy is only applied at resource creation: simply editing a
-      // resource does NOT pull it into the user's account.
-      accounts.add(this.context.accessPolicy.compartment.reference);
+    const existingAccounts = extractAccountReferences(existing?.meta);
+
+    const policyCompartment = this.context.accessPolicy?.compartment?.reference;
+    if (policyCompartment) {
+      // On create: assign the writer's compartment as the resource account.
+      // On update: preserve the compartment only if the resource already has it as an account.
+      // Editing a resource never pulls it into a new compartment via access policy.
+      const alreadyHasAccount = existingAccounts?.some((a) => a.reference === policyCompartment);
+      if (!existing || alreadyHasAccount) {
+        accounts.add(policyCompartment);
+      }
     }
 
     if (updated.resourceType === 'Patient') {
       // When examining a Patient resource, we only look at the individual patient
       // We should not call `getPatients` and `readReference`
-      const existingAccounts = extractAccountReferences(existing?.meta);
       for (const account of existingAccounts ?? EMPTY) {
         accounts.add(account.reference as string);
       }
